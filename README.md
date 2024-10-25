@@ -32,7 +32,7 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-1. Copy *config.example* to *config.py*
+1. Copy *config.example.py* to *config.py*
 2. Edit *config.py* with your configuration
 
 # Run the script
