@@ -29,12 +29,14 @@ def is_gameplay(data, yoffset):
 
 
 def main():
-    client = obs.ReqClient(host='localhost', port=4455, password=config.OBS_PASSWORD, timeout=3)
-    client.set_source_filter_settings(config.PLAYER1_VIDEO_SOURCE, 'Dynamic Delay', {'duration': 0}, True)
-    client.set_source_filter_settings(config.PLAYER2_VIDEO_SOURCE, 'Dynamic Delay', {'duration': 0}, True)
+    video_sources = config.PLAYER1_VIDEO_SOURCES + config.PLAYER2_VIDEO_SOURCES
+    audio_sources = config.PLAYER1_AUDIO_SOURCES + config.PLAYER2_AUDIO_SOURCES
+    shortcuts = ['OBS_KEY_F6', 'OBS_KEY_F8']
 
-    client.set_input_mute(config.PLAYER1_AUDIO_SOURCE, True)
-    client.set_input_mute(config.PLAYER2_AUDIO_SOURCE, True)
+    client = obs.ReqClient(host='localhost', port=4455, password=config.OBS_PASSWORD, timeout=3)
+
+    for source in video_sources:
+        client.set_source_filter_settings(source, 'Dynamic Delay', {'duration': 0}, True)
 
     cap = cv2.VideoCapture(config.WEBCAM)
 
@@ -42,73 +44,63 @@ def main():
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
-    p1frame = None
-    p2frame = None
+    gameplay_frame = [None, None]
     synced = False
 
-    frame = 1
+    frame = 0
 
     while cap.isOpened():
         res, image = cap.read()
+        frame += 1
 
         if config.DEBUG:
             cv2.imshow('Preview', image)
             cv2.waitKey(1)
 
-        p1gameplay = is_gameplay(image, 0)
-        p2gameplay = is_gameplay(image, int(1080 / 2))
+        gameplay = [is_gameplay(image, 0), is_gameplay(image, int(1080 / 2))]
 
-        if p1gameplay:
-            if not p1frame:
-                p1frame = frame
-                print(f"p1frame in: {frame}")
-        elif p1frame:
-            synced = False
-            p1frame = None
-            client.set_input_mute(config.PLAYER1_AUDIO_SOURCE, True)
-            client.set_source_filter_settings(config.PLAYER1_VIDEO_SOURCE, 'Dynamic Delay', {'duration': 0}, True)
-            print(f"p1frame out: {frame}")
+        for i in [0, 1]:
+            if gameplay[i] and not gameplay_frame[i]:
+                print(f'Player {i + 1} first gameplay frame: {frame}')
+                gameplay_frame[i] = frame
 
-        if p2gameplay:
-            if not p2frame:
-                p2frame = frame
-                print(f"p2frame in: {frame}")
-        elif p2frame:
-            synced = False
-            p2frame = None
-            client.set_input_mute(config.PLAYER2_AUDIO_SOURCE, True)
-            client.set_source_filter_settings(config.PLAYER2_VIDEO_SOURCE, 'Dynamic Delay', {'duration': 0}, True)
-            print(f"p2frame out: {frame}")
+                for source in audio_sources:
+                    client.set_input_mute(source, False)
 
-        if not synced and p1frame and p2frame:
+            if not gameplay[i] and gameplay_frame[i]:
+                print(f'Player {i + 1} last gameplay frame: {frame}')
+                gameplay_frame[i] = None
+
+                for source in video_sources:
+                    client.set_source_filter_settings(source, 'Dynamic Delay', {'duration': 0}, True)
+
+                for source in audio_sources:
+                    client.set_input_mute(source, False)
+
+                synced = False
+
+        if not synced and all(gameplay_frame):
             synced = True
 
-            delay = abs(p1frame - p2frame) * 16.67 / 1000
+            delay = abs(gameplay_frame[0] - gameplay_frame[1]) * 16.67 / 1000
 
-            if p1frame < p2frame and delay <= 10:
-                print(f"Delay p1 by {delay:.2f}s")
+            if delay == 0 or delay > 10:
+                continue
 
-                client.set_source_filter_settings(config.PLAYER1_VIDEO_SOURCE, 'Dynamic Delay', {'duration': delay}, True)
+            delayed_player = 0 if gameplay_frame[0] < gameplay_frame[1] else 1
+            print(f'Player {delayed_player + 1} delayed by: {delay:.2f}s')
 
-                client.set_input_mute(config.PLAYER1_AUDIO_SOURCE, True)
-                client.set_input_mute(config.PLAYER2_AUDIO_SOURCE, False)
+            for source in [config.PLAYER1_VIDEO_SOURCES, config.PLAYER2_VIDEO_SOURCES][delayed_player]:
+                client.set_source_filter_settings(source, 'Dynamic Delay', {'duration': delay}, True)
 
-                time.sleep(0.1)
-                client.trigger_hotkey_by_key_sequence('OBS_KEY_F6', False, False, False, False)
-            elif p2frame < p1frame and delay <= 10:
-                print(f"Delay p2 by {delay:.2f}s")
-                client.set_source_filter_settings(config.PLAYER2_VIDEO_SOURCE, 'Dynamic Delay', {'duration': delay}, True)
+            for source in [config.PLAYER1_AUDIO_SOURCES, config.PLAYER2_AUDIO_SOURCES][delayed_player]:
+                client.set_input_mute(source, True)
 
-                client.set_input_mute(config.PLAYER1_AUDIO_SOURCE, False)
-                client.set_input_mute(config.PLAYER2_AUDIO_SOURCE, True)
+            for source in [config.PLAYER2_AUDIO_SOURCES, config.PLAYER1_AUDIO_SOURCES][delayed_player]:
+                client.set_input_mute(source, False)
 
-                time.sleep(0.1)
-                client.trigger_hotkey_by_key_sequence('OBS_KEY_F8', False, False, False, False)
-            else:
-                # Use p1 audio if the streams are already synced
-                client.set_input_mute(config.PLAYER1_AUDIO_SOURCE, False)
-
-        frame += 1
+            time.sleep(0.1)
+            client.trigger_hotkey_by_key_sequence(shortcuts[delayed_player], False, False, False, False)
 
 
 if __name__ == '__main__':
